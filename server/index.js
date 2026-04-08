@@ -10,12 +10,16 @@ import {
   markSoldBySeller,
   forceRemove,
   seedIfEmpty,
+  expireStaleClaims,
   CLAIM_TTL_MS,
 } from "./store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3002;
+
+/** Ghost buyer: expire claims on a timer so listings reopen even if nobody refreshes. */
+setInterval(() => expireStaleClaims(), 1000);
 
 app.use(cors());
 app.use(express.json());
@@ -68,6 +72,8 @@ app.post("/api/items/:id/mark-sold", (req, res) => {
     const status =
       result.code === "NOT_FOUND" ? 404 : result.code === "FORBIDDEN" ? 403 : 409;
     return res.status(status).json(result);
+  }
+  res.json(result);
 });
 
 app.post("/api/items/:id/remove", (req, res) => {
@@ -76,6 +82,8 @@ app.post("/api/items/:id/remove", (req, res) => {
     const status =
       result.code === "NOT_FOUND" ? 404 : result.code === "FORBIDDEN" ? 403 : 409;
     return res.status(status).json(result);
+  }
+  res.json(result);
 });
 
 const dist = path.join(__dirname, "..", "client", "dist");
@@ -86,6 +94,14 @@ if (process.env.NODE_ENV === "production") {
   });
 }
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Dorm Marketplace API http://localhost:${PORT}`);
+});
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(
+      `Port ${PORT} is already in use. Stop the other process or set PORT to a free port in your environment.`
+    );
+  }
+  throw err;
 });
