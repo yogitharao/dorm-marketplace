@@ -250,6 +250,56 @@ body {
   font-weight: 500;
 }
 
+.avail-strip {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  padding: 0.65rem 0.75rem;
+  border-radius: 8px;
+  margin-bottom: 0.75rem;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.avail-strip strong {
+  font-size: 0.88rem;
+}
+
+.avail-detail {
+  color: inherit;
+  opacity: 0.92;
+}
+
+.avail-open {
+  background: #14532d44;
+  border: 1px solid #22c55e55;
+  color: #bbf7d0;
+}
+
+.avail-yours {
+  background: #713f1255;
+  border: 1px solid #fbbf2455;
+  color: #fde68a;
+}
+
+.avail-locked {
+  background: #1e3a5f66;
+  border: 1px solid #60a5fa44;
+  color: #bfdbfe;
+}
+
+.avail-ended {
+  background: #27272a66;
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.seller-hint {
+  font-size: 0.85rem;
+  color: var(--accent);
+  margin: 0 0 0.5rem;
+}
+
 .card h3 {
   margin: 0 0 0.35rem;
   font-size: 1.05rem;
@@ -265,6 +315,20 @@ body {
   font-size: 0.85rem;
   color: var(--warn);
   margin: 0.75rem 0 0;
+}
+
+.timer-label {
+  display: block;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  opacity: 0.85;
+  margin-bottom: 0.15rem;
+}
+
+.timer-urgent {
+  color: #fb7185;
+  font-weight: 600;
 }
 
 .actions {

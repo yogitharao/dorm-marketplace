@@ -10,12 +10,16 @@ import {
   markSoldBySeller,
   forceRemove,
   seedIfEmpty,
+  expireStaleClaims,
   CLAIM_TTL_MS,
 } from "./store.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
 const PORT = process.env.PORT || 3002;
+
+/** Ghost buyer: expire claims on a timer so listings reopen even if nobody refreshes. */
+setInterval(() => expireStaleClaims(), 1000);
 
 app.use(cors());
 app.use(express.json());
@@ -90,6 +94,14 @@ if (process.env.NODE_ENV === "production") {
   });
 }
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
   console.log(`Dorm Marketplace API http://localhost:${PORT}`);
+});
+server.on("error", (err) => {
+  if (err.code === "EADDRINUSE") {
+    console.error(
+      `Port ${PORT} is already in use. Stop the other process or set PORT to a free port in your environment.`
+    );
+  }
+  throw err;
 });

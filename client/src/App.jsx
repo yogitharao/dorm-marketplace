@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
   getUserId,
   fetchItems,
@@ -32,6 +32,73 @@ function statusLabel(status) {
   }
 }
 
+/** Clear, testable UI mapping for “can I claim?” and why not. */
+function describeAvailability(item, viewerId) {
+  switch (item.status) {
+    case "available":
+      return {
+        stripClass: "avail-open",
+        headline: "Open to claim",
+        detail:
+          "First successful server claim wins; if two people try at once, only one gets the pickup slot.",
+        showClaim: true,
+      };
+    case "pending_pickup": {
+      if (item.claimedBy === viewerId) {
+        return {
+          stripClass: "avail-yours",
+          headline: "You hold the only claim",
+          detail:
+            "Confirm handoff after you meet in person. If you do not confirm before the timer ends, this listing becomes open again (ghost buyer protection).",
+          showClaim: false,
+        };
+      }
+      return {
+        stripClass: "avail-locked",
+        headline: "Not available — claim in progress",
+        detail:
+          "Another student holds the pickup slot. You cannot claim until the timer expires without confirmation or they complete handoff.",
+        showClaim: false,
+      };
+    }
+    case "sold":
+      return {
+        stripClass: "avail-ended",
+        headline: "Closed — sold",
+        detail: "This item is no longer on the market.",
+        showClaim: false,
+      };
+    case "removed":
+      return {
+        stripClass: "avail-ended",
+        headline: "Closed — removed",
+        detail: "The seller removed this listing.",
+        showClaim: false,
+      };
+    default:
+      return {
+        stripClass: "avail-ended",
+        headline: "Unknown state",
+        detail: "",
+        showClaim: false,
+      };
+  }
+}
+
+function claimErrorMessage(err) {
+  if (err.code === "CLAIM_LOST" && err.body?.reason === "CLAIM_SLOT_TAKEN_BY_OTHER") {
+    return "Claim lost: another student already got the pickup slot (concurrency). The listing stays locked until they finish or the timer expires.";
+  }
+  if (err.code === "CLAIM_LOST" && err.body?.reason === "CLAIM_SLOT_HELD_BY_YOU") {
+    return "You already have the active claim — use Confirm handoff or wait for the timer.";
+  }
+  if (err.body?.message) return err.body.message;
+  if (err.status === 409) {
+    return "This item is not available to claim right now.";
+  }
+  return err.message;
+}
+
 export default function App() {
   const userId = getUserId();
   const [items, setItems] = useState([]);
@@ -40,6 +107,8 @@ export default function App() {
   const [banner, setBanner] = useState(null);
   const [tick, setTick] = useState(0);
   const [form, setForm] = useState({ title: "", description: "", priceLabel: "" });
+  const prevSnapshotRef = useRef(new Map());
+  const ghostWarnedRef = useRef(new Set());
 
   const load = useCallback(async () => {
     try {
@@ -64,6 +133,35 @@ export default function App() {
     return () => clearInterval(id);
   }, []);
 
+  /** Detect ghost-buyer expiry: pending → available while you were the claimant. */
+  useEffect(() => {
+    for (const item of items) {
+      const prev = prevSnapshotRef.current.get(item.id);
+      if (
+        prev &&
+        prev.status === "pending_pickup" &&
+        item.status === "available" &&
+        prev.claimedBy === userId &&
+        !ghostWarnedRef.current.has(item.id)
+      ) {
+        ghostWarnedRef.current.add(item.id);
+        setBanner({
+          type: "err",
+          text: "Pickup window expired — you did not confirm in time. The item is open to claim again.",
+        });
+      }
+      prevSnapshotRef.current.set(item.id, {
+        status: item.status,
+        claimedBy: item.claimedBy,
+      });
+    }
+    for (const item of items) {
+      if (item.status === "pending_pickup" && item.claimedBy === userId) {
+        ghostWarnedRef.current.delete(item.id);
+      }
+    }
+  }, [items, userId]);
+
   async function handleCreate(e) {
     e.preventDefault();
     setBanner(null);
@@ -84,17 +182,17 @@ export default function App() {
   async function handleClaim(id) {
     setBanner(null);
     try {
-      await claimItem(id);
-      setBanner({ type: "ok", text: "You claimed this item — confirm pickup before the timer ends." });
+      const data = await claimItem(id);
+      const note = data.concurrencyNote
+        ? " Only one student can hold the claim; simultaneous clicks are resolved on the server."
+        : "";
+      setBanner({
+        type: "ok",
+        text: `Claim accepted — you have the pickup slot.${note} Confirm handoff before the timer ends.`,
+      });
       await load();
     } catch (err) {
-      setBanner({
-        type: "err",
-        text:
-          err.status === 409
-            ? "This item is no longer available (another student may have claimed it)."
-            : err.message,
-      });
+      setBanner({ type: "err", text: claimErrorMessage(err) });
       await load();
     }
   }
@@ -218,7 +316,7 @@ export default function App() {
           <h2>Marketplace</h2>
           {loading && <p className="muted">Loading…</p>}
           {!loading && items.length === 0 && <p className="muted">No listings yet. Be the first to post.</p>}
-          <ul className="grid">
+          <ul className="grid" aria-live="polite">
             {items.map((item) => {
               const isSeller = item.sellerId === userId;
               const isClaimant = item.claimedBy === userId;
@@ -227,6 +325,8 @@ export default function App() {
                   ? item.claimExpiresAt - Date.now()
                   : 0;
               void tick;
+              const avail = describeAvailability(item, userId);
+              const urgent = item.status === "pending_pickup" && isClaimant && remaining > 0 && remaining <= 30_000;
 
               return (
                 <li key={item.id} className="card">
@@ -234,18 +334,33 @@ export default function App() {
                     <span className={`badge status-${item.status}`}>{statusLabel(item.status)}</span>
                     {item.priceLabel ? <span className="price">{item.priceLabel}</span> : null}
                   </div>
+
+                  <div className={`avail-strip ${avail.stripClass}`}>
+                    <strong>{avail.headline}</strong>
+                    <span className="avail-detail">{avail.detail}</span>
+                  </div>
+
                   <h3>{item.title}</h3>
                   {item.description ? <p className="desc">{item.description}</p> : null}
 
+                  {item.status === "pending_pickup" && isSeller && !isClaimant && (
+                    <p className="seller-hint" role="status">
+                      A buyer has claimed this listing. If you already sold it in person, use Mark as sold or Remove.
+                    </p>
+                  )}
+
                   {item.status === "pending_pickup" && item.claimExpiresAt && (
-                    <p className="timer">
-                      Pickup deadline: <strong>{formatRemaining(remaining)}</strong> left
-                      {isClaimant ? " — confirm when you meet" : ""}
+                    <p className={`timer${urgent ? " timer-urgent" : ""}`}>
+                      <span className="timer-label">Pickup timer</span>
+                      <strong>{formatRemaining(remaining)}</strong> remaining
+                      {isClaimant
+                        ? " — confirm after you meet, or this listing will reopen automatically."
+                        : null}
                     </p>
                   )}
 
                   <div className="actions">
-                    {item.status === "available" && (
+                    {avail.showClaim && (
                       <button type="button" className="btn primary" onClick={() => handleClaim(item.id)}>
                         Claim item
                       </button>

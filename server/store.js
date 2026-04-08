@@ -10,6 +10,10 @@ export const CLAIM_TTL_MS = 90_000;
 
 const items = new Map();
 
+/**
+ * Scenario 2 — Ghost buyer: releases expired claims so the item is available again.
+ * Called on every read/write and from a 1s server timer so expiry does not depend on polling.
+ */
 export function expireStaleClaims() {
   const now = Date.now();
   for (const item of items.values()) {
@@ -26,19 +30,68 @@ export function expireStaleClaims() {
 }
 
 /**
- * Synchronous claim (Scenario 1 — no await between check and update; one winner per item).
+ * Synchronous claim (Scenario 1 — concurrency collision).
+ * No await between availability check and state write, so exactly one concurrent request
+ * can transition from "available" to "pending_pickup"; others get CLAIM_LOST with a reason.
  */
 export function claimItem(itemId, userId) {
   expireStaleClaims();
   const item = items.get(itemId);
   if (!item) return { ok: false, code: "NOT_FOUND", message: "Listing not found." };
   if (item.status !== "available") {
-    return { ok: false, code: "UNAVAILABLE", message: "This item is no longer available to claim." };
+    return claimRejected(item, userId);
   }
   item.status = "pending_pickup";
   item.claimedBy = userId;
   item.claimExpiresAt = Date.now() + CLAIM_TTL_MS;
-  return { ok: true, item: serializeItem(item) };
+  return {
+    ok: true,
+    outcome: "CLAIM_WON",
+    concurrencyNote:
+      "Server accepted this claim first; any other simultaneous claim receives CLAIM_LOST.",
+    item: serializeItem(item),
+  };
+}
+
+/** Explains why claim failed — drives clear UI for collisions vs ended listings. */
+function claimRejected(item, userId) {
+  if (item.status === "pending_pickup") {
+    const other = item.claimedBy && item.claimedBy !== userId;
+    return {
+      ok: false,
+      code: "CLAIM_LOST",
+      reason: other ? "CLAIM_SLOT_TAKEN_BY_OTHER" : "CLAIM_SLOT_HELD_BY_YOU",
+      message: other
+        ? "Claim failed: another student already holds this item for pickup (only one claim at a time)."
+        : "You already have the active claim on this item — confirm handoff or wait for the timer to expire.",
+      item: serializeItem(item),
+    };
+  }
+  if (item.status === "sold") {
+    return {
+      ok: false,
+      code: "UNAVAILABLE",
+      reason: "ALREADY_SOLD",
+      message: "This listing is already marked sold.",
+      item: serializeItem(item),
+    };
+  }
+  if (item.status === "removed") {
+    return {
+      ok: false,
+      code: "UNAVAILABLE",
+      reason: "REMOVED",
+      message: "This listing was removed by the seller.",
+      item: serializeItem(item),
+    };
+  }
+  return {
+    ok: false,
+    code: "UNAVAILABLE",
+    reason: "UNKNOWN",
+    message: "This item is not available to claim.",
+    item: serializeItem(item),
+  };
 }
 
 export function confirmPickup(itemId, userId) {
