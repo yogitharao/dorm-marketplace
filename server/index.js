@@ -15,7 +15,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const app = express();
-const PORT = process.env.PORT || 3001;
+const PORT = process.env.PORT || 3002;
 
 app.use(cors());
 app.use(express.json());
@@ -68,6 +68,8 @@ app.post("/api/items/:id/mark-sold", (req, res) => {
     const status =
       result.code === "NOT_FOUND" ? 404 : result.code === "FORBIDDEN" ? 403 : 409;
     return res.status(status).json(result);
+  }
+  res.json(result);
 });
 
 app.post("/api/items/:id/remove", (req, res) => {
@@ -76,6 +78,8 @@ app.post("/api/items/:id/remove", (req, res) => {
     const status =
       result.code === "NOT_FOUND" ? 404 : result.code === "FORBIDDEN" ? 403 : 409;
     return res.status(status).json(result);
+  }
+  res.json(result);
 });
 
 const dist = path.join(__dirname, "..", "client", "dist");
